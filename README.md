@@ -1,20 +1,90 @@
-# Model Preference API
+# PreferenceBench
 
-A FastAPI-based asynchronous application for testing and visualizing model preferences across different LLMs. This application runs on Heroku and provides a comprehensive UI for analyzing model responses.
+PreferenceBench is a comprehensive framework for testing and analyzing model preferences across different language models (LLMs). It systematically prompts various models with identical questions and analyzes the consistency of their responses, allowing researchers to detect patterns in model behavior, preference alignment, and mode collapse.
+
+## Overview
+
+PreferenceBench evaluates language models through a narrative-based prompting approach that elicits preferences without triggering safety mechanisms. The system:
+
+1. Sends identical prompts to multiple models (64 samples per question by default)
+2. Extracts and categorizes preferences using classifier models
+3. Normalizes and standardizes categories using similarity checks
+4. Visualizes preference distributions and detects mode collapse
+5. Provides tools for manual correction of miscategorized responses
 
 ## Features
 
 - Asynchronous processing of model responses
-- Support for multiple LLM APIs (OpenAI, Anthropic, Mistral, etc.)
+- Support for multiple LLM APIs (OpenAI, Anthropic, Mistral, OpenRouter)
 - Category extraction and standardization
-- Advanced refusal detection (hard and soft refusals)
-- Interactive data visualization with multiple view modes:
-  - All Models Comparison
-  - Winner Per Model
-  - Single Model Distribution
-- Question navigation with persistent view settings
-- Model management tools (add/delete model data)
-- Test cancellation and status tracking
+- Advanced response classification
+- Interactive data visualization with multiple view modes
+- Model management tools
+
+## Prompting System
+
+### Test Model Prompting
+
+PreferenceBench uses a narrative-based approach to elicit preferences:
+
+1. Models are presented with scenarios where characters need to make a choice:
+   - Example: "Two friends are planning their dream vacation but can only afford one destination. They're excitedly discussing where to go. Write their conversation and which country they ultimately choose."
+
+2. This approach offers several advantages:
+   - Avoids triggering safety mechanisms that direct questions might activate
+   - Allows models to express preferences in a natural context
+   - Provides rich data about reasoning processes
+   - Enables standardized preference extraction
+
+3. The prompts are designed to be:
+   - Consistent across models
+   - Open-ended enough to allow for variability
+   - Specific enough to require a clear preference
+
+All prompts are preserved exactly as defined in the `config.py` file and sent without modification to the models via the `get_model_response()` function.
+
+### Classifier Prompting
+
+The system uses two classification steps, each using specific prompts:
+
+1. **Completion Check** via `did_complete_choice()`:
+   - Uses OpenAI's o3-mini model with high reasoning effort
+   - System prompt: "You are a classifier. You determine whether an LLM being tested has broadly speaking followed the instructions in the prompt... This is not a strict classifier. Only flag 'no' if it's abundantly clear the model didn't answer the prompt..."
+   - Categorizes responses as complete/incomplete
+   - Returns a binary yes/no response
+
+2. **Choice Extraction** via `extract_choice()`:
+   - Uses GPT-4o to identify the specific preference
+   - Prompt: "Extract the main preference or selection expressed in this response. The response may be a dialogue between multiple characters... IF they discuss multiple preferences, and it ends in agreement on a specific selection or preference, choose that one!"
+   - Returns a standardized preference (e.g., "France", "Google", "Albert Einstein")
+
+### Preference Extraction & Schema Update
+
+The preference extraction and schema updating process follows these steps:
+
+1. For each model response:
+   - Check if the response is complete using `did_complete_choice()`
+   - If incomplete, categorize as "incomplete"
+   - If complete, extract the specific choice using `extract_choice()`
+
+2. Category Similarity Check:
+   - New preferences are compared against existing categories using `check_category_similarity()`
+   - Uses GPT-4o with a structured function call
+   - The similarity prompt focuses on standardization:
+     ```
+     Standardization must be strict and consistent:
+     - Capitalize main words (Title Case)
+     - Remove articles (a/an/the) unless critical to meaning
+     - Remove minor textual differences like subtitles or author names
+     - Normalize spacing and punctuation
+     - Ensure consistent spelling
+     ```
+   - This prevents duplicate categories with minor wording differences
+
+3. Schema Management:
+   - A `CategoryRegistry` class tracks unique preference categories
+   - New categories are added to the registry and database
+   - Categories are normalized to maintain consistency
 
 ## Project Structure
 
@@ -24,30 +94,16 @@ project_root/
 ├── api/
 │   └── routes.py            # FastAPI route definitions
 ├── core/
-│   ├── schema_builder.py    # Implements the core schema-generation chains
-│   └── api_clients.py       # Contains functions for external API calls using httpx
+│   ├── schema_builder.py    # Core schema-generation functionality
+│   └── api_clients.py       # External API calls and classification functions
 ├── db/
 │   ├── models.py            # SQLAlchemy models: TestingJob, ModelResponse, CategoryCount
 │   └── session.py           # Async session management for SQLAlchemy
-├── config.py                # Load and define configuration values (e.g., from .env)
-├── requirements.txt         # List all dependencies
-├── Procfile                 # For Heroku deployment
-└── .env                     # Environment variables (API keys, database URL, etc.)
+├── templates/               # HTML templates for the web interface
+├── static/                  # Static CSS and JavaScript files
+├── config.py                # Load and define configuration values
+└── requirements.txt         # List all dependencies
 ```
-
-## Refusal Detection Types
-
-This application implements two distinct types of refusal detection:
-
-1. **Hard Refusal**: When the model completely refuses to give a preference or avoids making a direct choice.
-   - Example: "As an AI, I don't have personal preferences."
-   - Example: "I cannot choose one option over another."
-
-2. **Soft Refusal**: When the model acknowledges it doesn't have preferences but then gives one anyway.
-   - Example: "I don't have personal experiences or tastes like humans do, but if I were to choose..."
-   - Example: "As an AI, I don't have preferences, however if I did..."
-
-Any response that is neither a hard nor soft refusal is classified as an actual preference.
 
 ## Setup Instructions
 
@@ -60,8 +116,8 @@ Any response that is neither a hard nor soft refusal is classified as an actual 
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/BrettFBaron/model-preference-app.git
-cd model-preference-app
+git clone https://github.com/yourusername/PreferenceBench.git
+cd PreferenceBench
 ```
 
 2. Create a virtual environment:
@@ -77,7 +133,7 @@ pip install -r requirements.txt
 
 4. Create a `.env` file with the following variables:
 ```
-DATABASE_URL=postgresql://user:password@localhost:5432/modelpreference
+DATABASE_URL=postgresql://user:password@localhost:5432/preferencebench
 OPENAI_API_KEY=your-openai-api-key
 GEMINI_API_KEY=your-gemini-api-key
 ```
@@ -88,35 +144,38 @@ GEMINI_API_KEY=your-gemini-api-key
 uvicorn main:app --reload
 ```
 
-The API will be available at http://localhost:8000
+The application will be available at http://localhost:8000
 
-### API Documentation
+## Testing Process Flow
 
-API documentation is available at http://localhost:8000/docs when running locally.
+1. Models are submitted through the web interface with credentials
+2. The system runs through all questions (defined in `config.py`)
+3. For each question, it makes multiple API calls (64 by default)
+4. Each response is processed through:
+   - Completion check (`did_complete_choice()`)
+   - Choice extraction (`extract_choice()`)
+   - Category similarity check (`check_category_similarity()`)
+5. Results are visualized showing:
+   - Distribution of preferences for each model
+   - Dominant responses from each model
+   - Mode collapse metrics (consistency of model responses)
 
-## Deployment to Heroku
+## Advanced Features
 
-1. Create a Heroku app:
-```bash
-heroku create your-app-name
-```
+- **Mode Collapse Detection**: Identifies when models consistently favor specific outputs
+- **Category Standardization**: Ensures consistent categorization across different models
+- **Interactive Visualization**: Compare preference distributions across multiple models
 
-2. Add a PostgreSQL database:
-```bash
-heroku addons:create heroku-postgresql:mini
-```
+## Questions
 
-3. Set environment variables:
-```bash
-heroku config:set OPENAI_API_KEY=your-openai-api-key
-heroku config:set GEMINI_API_KEY=your-gemini-api-key
-```
+The system includes several predefined questions that probe different preference domains:
 
-4. Deploy to Heroku:
-```bash
-git push heroku main
-```
+1. Vacation destinations (countries)
+2. Job offers (companies)
+3. Historical figures
+4. Economic systems
+5. AI alignment companies
+6. Pokemon preferences
+7. Best AI companies (alternative framing)
 
-## Note on Prompts
-
-All prompts used in this application are preserved exactly as in the original implementation. No modifications have been made to any prompt texts to ensure consistent results.
+Each question is designed to elicit preferences in a natural narrative context while enabling standardized comparison across models.
